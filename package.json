@@ -1,0 +1,10 @@
+{
+  "name": "SensorSim",
+  "version": "0.1.0",
+  "description": "Sensor Simulator for Node.js",
+  "author": "Jack Lund <jackl@geekheads.net>",
+  "license": "MIT",
+  "dependencies" : {
+    "async" : "*"
+  }
+}

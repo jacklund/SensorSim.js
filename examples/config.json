@@ -1,0 +1,14 @@
+{
+  "dataSources": [
+    {
+      "filename": "/Users/jackl/Downloads/Car Door.m4a",
+      "filetype": "audio",
+      "socketName": "foo"
+    },
+    {
+      "filename": "/Users/jackl/Downloads/Car Door 2.m4a",
+      "filetype": "audio",
+      "socketName": "foo"
+    }
+  ]
+}
