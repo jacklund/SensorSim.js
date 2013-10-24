@@ -61,6 +61,7 @@ with the data source number (starting with zero) first, followed by the timestam
 Unfortunately, Java doesn't support Unix Sockets natively. However, you can use a third-party package such as [junixsocket](https://code.google.com/p/junixsocket/)
 for reading it:
 
+    :::java
     import org.newsclub.net.unix.AFUNIXSocket;
     import org.newsclub.net.unix.AFUNIXSocketAddress;
     import org.newsclub.net.unix.AFUNIXSocketException;
@@ -87,6 +88,7 @@ for reading it:
         int read = is.read(buf);
 
 ### Python
+    :::python
     import socket
 
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -96,6 +98,7 @@ for reading it:
     print 'Received', repr(data)
 
 ### Node.js
+    :::javascript
     var net = require('net');
     var conn = net.createConnection('/tmp/sensorSim.sock', function() {
       conn.setEncoding('utf8');
