@@ -3,7 +3,7 @@
  * be read by prototype code. Uses drivers to read the data. The drivers should be named
  * 'filetype.js', where 'filetype' is the filetype that they read.
  *
- * The driver is expected to export an 'initialize' function, which takes in the datasource
+ * The driver is expected to export an 'getStream' function, which takes in the datasource
  * configuration and which returns a function for doing the actual reading of the data.
  * That function is expected to read the data, and convert it to an array of values. Each
  * value is itself an array whose first value is a timestamp in nanoseconds, and a
@@ -51,8 +51,8 @@ if (process.argv.length > 3) {
 function loadDriver(name) {
   var driverPath = config.driverDir + path.sep + name + '.js';
   var driver = require(driverPath);
-  if (!driver.initialize) {
-    console.error("Driver %s has not exported a function called 'initialize'", name);
+  if (!driver.getStream) {
+    console.error("Driver %s has not exported a function called 'getStream'", name);
     process.exit(-1);
   }
   return driver;
@@ -102,6 +102,14 @@ function getDriversForDS(source, which) {
 /*     sock - the socket to write to
 ****************************************************************/
 function processDataSources(results, sock) {
+
+  // Make sure we have data from all datasources
+  for (var i = 0; i < results.length; ++i) {
+    if (!results[i] || results[i].length == 0) {
+      return;
+    }
+  }
+
   // Set up the indices into each result array
   indices = [];
   for (var i = 0; i < results.length; ++i) {
@@ -119,31 +127,91 @@ function processDataSources(results, sock) {
 
     // Loop through each datasources' results
     for (var i = 0; i < results.length; ++i) {
-      // If we haven't reached the end of the results...
-      if (indices[i] < results[i].length) {
-        found = true;
-        // Find the one with the smallest timestamp
-        if (min == null || results[i][indices[i]][0] < min) {
-          min = results[i][indices[i]][0];
+
+      // If we ran out of data for one of our datasources,
+      // we have to wait for more data
+      if (indices[i] == results[i].length) {
+        // Go through the results and slice off what we've
+        // already read
+        for (var j = 0; j < results.length; ++j) {
+          if (indices[j] == results[j].length) {
+            results[j] = null;
+          } else {
+            results[j] = results[j].slice(indices[j]);
+          }
+        }
+        return;
+      }
+
+      found = true;
+      // Find the one with the smallest timestamp
+      var next = results[i][indices[i]];
+      if (next) {
+        if (min == null || next[0] < min) {
+          min = next[0];
           minIndex = i;
         }
       }
     }
+
+    // If we ran out of data on all sources, close the socket
+    // and return
+    if (min == null) {
+      sock.destroy();
+      return;
+    }
+
     // Write the data to the socket
     if (found) {
-      sock.write(util.format("%d, %d, %s\n", minIndex, min, results[minIndex][indices[minIndex]][1]));
-      indices[minIndex]++;
+      if (results[minIndex][indices[minIndex]]) {
+        sock.write(util.format("%d, %d, %s\n", minIndex, min, results[minIndex][indices[minIndex]][1]));
+        indices[minIndex]++;
+      }
     }
   }
 }
 
-// Set up to use async.parallel
-// Grab each of the driver read functions and add them
-// to an array to be passed to async.parallel
-functions = [];
-for (var i = 0; i < config.dataSources.length; ++i) {
-  var driver = getDriversForDS(config.dataSources[i], i);
-  functions.push(driver.initialize(config.dataSources[i]));
+// Create the results array
+results = new Array(config.dataSources.length);
+
+
+/*****************************************************************************
+ * Start up reading from the data sources
+ *    index - the index of the data source
+ *    sock  - the Unix socket we're writing to
+*****************************************************************************/
+function startDataStream(index, sock) {
+  // Get the stream to read from
+  var driver = getDriversForDS(config.dataSources[index], index);
+  var stream = driver.getStream(config.dataSources[index]);
+
+  // Handler for incoming data
+  stream.on('data', function(data) {
+    if (results[index]) {
+      results[index] = results[index].concat(data);
+    } else {
+      results[index] = data;
+    }
+
+    processDataSources(results, sock);
+  });
+
+  // Handler for end of data on a source
+  stream.on('end', function() {
+    if (results[index]) {
+      results[index].push(null);
+    } else {
+      results[index] = [null];
+    }
+
+    processDataSources(results, sock);
+  });
+
+  // Error handler
+  stream.on('error', function(err) {
+    console.error(err);
+    process.exit(-1);
+  });
 }
 
 /*****************************************************************************
@@ -152,34 +220,30 @@ for (var i = 0; i < config.dataSources.length; ++i) {
 /* Processes each of the functions in the array in parallel, and calls the
 /* callback function when they have all completed, with the results of each
 *****************************************************************************/
-async.parallel(functions, function(err, results) {
+// Create our Unix socket server
+var server = net.createServer(function(sock) {
+  // We got a connection
+  // Stop accepting connections
+  server.close();
 
-  // All functions completed, process the results
-  if (err) return console.error(err);
-
-  // Create our Unix socket server
-  var server = net.createServer(function(sock) {
-    // We got a connection
-    // Stop accepting connections
-    server.close();
-
-    // Handle the socket closing
-    sock.on('close', function() {
-      console.error("Other end closed socket, exiting");
-      process.exit(-1);
-    });
-
-    // Handle a socket error
-    sock.on('error', function(err) {
-      console.error("Got error: %s", err);
-      process.exit(-1);
-    });
-
-    // Process the data sources
-    processDataSources(results, sock);
+  // Handle the socket closing
+  sock.on('close', function() {
+    console.error("Other end closed socket, exiting");
+    process.exit(-1);
   });
 
-  // Delete the socket if it exists
-  if (fs.existsSync(config.socket)) fs.unlinkSync(config.socket);
-  server.listen(config.socket);
+  // Handle a socket error
+  sock.on('error', function(err) {
+    console.error("Got error: %s", err);
+    process.exit(-1);
+  });
+
+  // Gentlemen, start your engines!
+  for (var i = 0; i < config.dataSources.length; ++i) {
+    startDataStream(i, sock);
+  }
 });
+
+// Delete the socket if it exists and then create and listen on it
+if (fs.existsSync(config.socket)) fs.unlinkSync(config.socket);
+server.listen(config.socket);
