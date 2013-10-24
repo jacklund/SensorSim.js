@@ -1,5 +1,5 @@
 /***************************************************************************************
- * Sensor simulator. Reads a number of data files and * writes them to a unix socket to
+ * Sensor simulator. Reads a number of data files and writes them to a unix socket to
  * be read by prototype code. Uses drivers to read the data. The drivers should be named
  * 'filetype.js', where 'filetype' is the filetype that they read.
  *
